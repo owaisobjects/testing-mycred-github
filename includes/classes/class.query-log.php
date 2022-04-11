@@ -63,6 +63,7 @@ if ( ! class_exists( 'myCRED_Query_Log' ) ) :
 					$this->results    = $cached_results['results'];
 					$this->num_rows   = $cached_results['num_rows'];
 					$this->total_rows = $cached_results['total_rows'];
+					$this->max_num_pages = (int)$cached_results['max_num_pages'];
 
 					if ( $this->args['number'] !== NULL && $this->args['number'] < 0 )
 						$this->max_num_pages = ceil( $this->num_rows / $this->args['number'] );
@@ -237,10 +238,11 @@ if ( ! class_exists( 'myCRED_Query_Log' ) ) :
 			if ( $cache_results ) {
 
 				$new_cache = array(
-					'request'    => $this->request,
-					'results'    => $this->results,
-					'num_rows'   => $this->num_rows,
-					'total_rows' => $this->total_rows
+					'request'       => $this->request,
+					'results'       => $this->results,
+					'num_rows'      => $this->num_rows,
+					'total_rows'    => $this->total_rows,
+                    'max_num_pages' => $this->max_num_pages
 				);
 
 				$this->cache_result( $new_cache );
@@ -873,9 +875,12 @@ if ( ! class_exists( 'myCRED_Query_Log' ) ) :
 				$data_query = sanitize_text_field( $this->args['data'] );
 
 				// Check if we are using wildcards
-				if ( str_replace( '%', '', $data_query ) != $data_query )
+				if( str_replace( '!%', '', $data_query ) != $data_query )
+					$wheres[] = $wpdb->prepare( "data NOT LIKE %s", str_replace( '!%', '%', $data_query ) );
+				else if( str_replace( '!', '', $data_query ) != $data_query )
+					$wheres[] = $wpdb->prepare( "data != %s", $data_query );
+				else if( str_replace( '%', '', $data_query ) != $data_query )
 					$wheres[] = $wpdb->prepare( "data LIKE %s", $data_query );
-
 				else
 					$wheres[] = $wpdb->prepare( "data = %s", $data_query );
 
@@ -883,14 +888,12 @@ if ( ! class_exists( 'myCRED_Query_Log' ) ) :
 
 			/**
 			 * Ordering of results
-			 *
-
-				 // Single order
-				 orderby=time&order=ASC
-
-				 // Multiple orders
-				 'orderby' => array( 'time' => 'ASC', 'id' => 'ASC' )
-
+			 * 
+			 * Single order
+			 * orderby=time&order=ASC
+			 * 
+			 * Multiple orders
+			 * 'orderby' => array( 'time' => 'ASC', 'id' => 'ASC' )
 			 */
 			$this->sortby    = "ORDER BY time DESC";
 			if ( ! empty( $this->args['orderby'] ) ) {
@@ -1283,7 +1286,7 @@ if ( ! class_exists( 'myCRED_Query_Log' ) ) :
 
 			$removable_query_args = wp_removable_query_args();
 
-			$current_url          = set_url_scheme( 'http://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'] );
+			$current_url          = set_url_scheme( sanitize_url('http://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI']) );
 			$current_url          = remove_query_arg( $removable_query_args, $current_url );
 			$current_url          = str_replace( '/' . $current . '/', '/', $current_url );
 			$current_url          = apply_filters( 'mycred_log_front_nav_url', $current_url, $this );
@@ -1380,7 +1383,7 @@ if ( ! class_exists( 'myCRED_Query_Log' ) ) :
 			$output             = '';
 			$total_pages        = $this->max_num_pages;
 			$current            = $this->get_pagenum();
-			$current_url        = set_url_scheme( 'http://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI'] );
+			$current_url        = set_url_scheme( sanitize_url('http://' . $_SERVER['HTTP_HOST'] . $_SERVER['REQUEST_URI']) );
 
 			if ( ! $this->is_admin )
 				$current_url = str_replace( '/page/' . $current . '/', '/', $current_url );
@@ -1837,7 +1840,7 @@ jQuery(function($) {
 			if ( ! $this->render_mode ) return;
 
 			if ( isset( $_GET['s'] ) && $_GET['s'] != '' )
-				$serarch_string = $_GET['s'];
+				$serarch_string = sanitize_text_field( $_GET['s'] );
 			else
 				$serarch_string = '';
 
@@ -2354,7 +2357,8 @@ if ( ! function_exists( 'mycred_get_all_references' ) ) :
 			'link_click'          => __( 'Link Click', 'mycred' ),
 			'watching_video'      => __( 'Watching Video', 'mycred' ),
 			'visitor_referral'    => __( 'Visitor Referral', 'mycred' ),
-			'signup_referral'     => __( 'Signup Referral', 'mycred' )
+			'signup_referral'     => __( 'Signup Referral', 'mycred' ),
+			'anniversary'         => __( 'Anniversary', 'mycred' ),
 		);
 
 		if ( class_exists( 'BuddyPress' ) ) {
@@ -2380,7 +2384,7 @@ if ( ! function_exists( 'mycred_get_all_references' ) ) :
 			$hooks['leaving_group']          = __( 'Leaving Group', 'mycred' );
 			$hooks['upload_group_avatar']    = __( 'New Group Avatar', 'mycred' );
 			$hooks['upload_group_cover']     = __( 'New Group Cover', 'mycred' );
-			$hooks['new_group_comment']      = __( 'New Group Comment', 'mycred' );
+			$hooks['new_group_comment']      = __( 'New Group Post', 'mycred' );
 		}
 
 		if ( function_exists( 'bpa_init' ) || function_exists( 'bpgpls_init' ) ) {
@@ -2451,6 +2455,14 @@ if ( ! function_exists( 'mycred_get_all_references' ) ) :
 			$addons['buy_creds_with_bitpay']          = __( 'buyCRED Purchase (BitPay)', 'mycred' );
 			$addons['buy_creds_with_bank']            = __( 'buyCRED Purchase (Bank Transfer)', 'mycred' );
 			$addons = apply_filters( 'mycred_buycred_refs', $addons );
+		}
+
+		// added cashcred refernce in 2.2.4
+		if ( class_exists( 'myCRED_cashCRED_Module' ) ) {
+			$addons['fee_transfer'] = __( 'cashCred Fee Transfer', 'mycred' );
+			$addons['cashcred_withdrawal_fee']          = __( 'cashCred Withdrawal Fee	', 'mycred' );
+			$addons['cashcred_withdrawal']         = __( 'cashCred Withdrawal', 'mycred' );
+			$addons = apply_filters( 'mycred_cashcred_refs', $addons );
 		}
 
 		if ( class_exists( 'myCRED_Coupons_Module' ) )
@@ -2525,7 +2537,7 @@ endif;
 /**
  * Get Used Log Entry Count
  * @since 1.7
- * @version 1.0
+ * @version 1.1
  */
 if ( ! function_exists( 'mycred_user_has_log_entries' ) ) :
 	function mycred_user_has_log_entries( $user_id = NULL ) {
@@ -2534,7 +2546,7 @@ if ( ! function_exists( 'mycred_user_has_log_entries' ) ) :
 		if ( $user_id === 0 ) return 0;
 
 		$count = mycred_get_user_meta( $user_id, 'mycred-log-count', '', false );
-		if ( $count == '' ) {
+		if ( empty( $count ) ) {
 
 			global $wpdb, $mycred_log_table;
 
@@ -2750,14 +2762,15 @@ endif;
 /**
  * Get Search Args
  * Converts URL arguments into an array of log query friendly arguments.
- * @since 1.7
+ * @since 1.8
+ * @since 2.3 Added `fields` in exclude array to prevent SQL Injection
  * @version 1.0.3
  */
 if ( ! function_exists( 'mycred_get_search_args' ) ) :
 	function mycred_get_search_args( $exclude = NULL ) {
 
 		if ( $exclude === NULL )
-			$exclude = array( 'page', 'mycred-export', 'mycred-action', 'action', 'set', '_token' );
+			$exclude = array( 'page', 'mycred-export', 'mycred-action', 'action', 'set', '_token', 'fields' );
 
 		$search_args = array();
 		if ( ! empty( $_GET ) ) {

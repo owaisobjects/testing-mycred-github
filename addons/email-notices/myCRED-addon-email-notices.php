@@ -35,22 +35,7 @@ if ( ! class_exists( 'myCRED_Email_Notice_Module' ) ) :
 
 			parent::__construct( 'myCRED_Email_Notice_Module', array(
 				'module_name' => 'emailnotices',
-				'defaults'    => array(
-					'from'        => array(
-						'name'        => get_bloginfo( 'name' ),
-						'email'       => get_bloginfo( 'admin_email' ),
-						'reply_to'    => get_bloginfo( 'admin_email' )
-					),
-					'filter'      => array(
-						'subject'     => 0,
-						'content'     => 0
-					),
-					'use_html'    => true,
-					'content'     => '',
-					'styling'     => '',
-					'send'        => '',
-					'override'    => 0
-				),
+				'defaults'    => mycred_get_addon_defaults( 'emailnotices' ),
 				'register'    => false,
 				'add_to_core' => true,
 				'menu_pos'    => 90
@@ -75,14 +60,16 @@ if ( ! class_exists( 'myCRED_Email_Notice_Module' ) ) :
 
 			add_action( 'mycred_badge_level_reached',    array( $this, 'badge_check' ), 10, 3 );
 			add_action( 'mycred_user_got_promoted',      array( $this, 'rank_promotion' ), 10, 4 );
-			add_action( 'mycred_user_got_demoted',       array( $this, 'rank_demotion' ), 10, 4 );
-
-			add_action( 'mycred_send_email_notices',     'mycred_email_notice_cron_job' );
+			add_action( 'mycred_user_got_demoted',       array( $this, 'rank_demotion' ), 10, 4 );		
+            
+            add_action( 'mycred_send_email_notices',     'mycred_email_notice_cron_job' );
 
 			add_shortcode( MYCRED_SLUG . '_email_subscriptions', 'mycred_render_email_subscriptions' );
 
 			add_action( 'mycred_admin_enqueue',          array( $this, 'enqueue_scripts' ), $this->menu_pos );
 			add_action( 'mycred_add_menu',               array( $this, 'add_to_menu' ), $this->menu_pos );
+			
+            add_action( 'mycred_after_payment_request',  array( $this, 'after_payment_request' ), 10, 2);	
 
 		}
 
@@ -274,8 +261,7 @@ if ( ! class_exists( 'myCRED_Email_Notice_Module' ) ) :
 			// site in the network, bail.
 			if ( mycred_override_settings() && ! mycred_is_main_site() ) return;
 
-			add_submenu_page(
-				MYCRED_SLUG,
+			mycred_add_main_submenu(
 				__( 'Email Notifications', 'mycred' ),
 				__( 'Email Notifications', 'mycred' ),
 				$this->core->get_point_editor_capability(),
@@ -294,10 +280,10 @@ if ( ! class_exists( 'myCRED_Email_Notice_Module' ) ) :
 			global $pagenow;
 
 			if ( isset( $_GET['post'] ) && mycred_get_post_type( $_GET['post'] ) == MYCRED_EMAIL_KEY && isset( $_GET['action'] ) && $_GET['action'] == 'edit' )
-				return MYCRED_SLUG;
+				return MYCRED_MAIN_SLUG;
 
 			if ( $pagenow == 'post-new.php' && isset( $_GET['post_type'] ) && $_GET['post_type'] == MYCRED_EMAIL_KEY )
-				return MYCRED_SLUG;
+				return MYCRED_MAIN_SLUG;
 
 			return $parent;
 
@@ -391,8 +377,10 @@ if ( ! class_exists( 'myCRED_Email_Notice_Module' ) ) :
 
 					if ( empty( $email->last_run ) )
 						echo '<p><strong>' . __( 'Active', 'mycred' ) . '</strong></p>';
-					else
-						echo '<p>' . sprintf( '<strong>%s</strong> %s', __( 'Active - Last run', 'mycred' ), date( get_option( 'date_format' ) . ' @ ' . get_option( 'time_format' ), $email->last_run ) ) . '</p>';
+					else {
+						$allowed_html = [ 'strong' => [] ];
+						echo '<p>' . wp_kses( sprintf( '<strong>%s</strong> %s', __( 'Active - Last run', 'mycred' ), date( get_option( 'date_format' ) . ' @ ' . get_option( 'time_format' ), $email->last_run ) ), $allowed_html ) . '</p>';
+					}
 
 				}
 
@@ -428,7 +416,12 @@ if ( ! class_exists( 'myCRED_Email_Notice_Module' ) ) :
 				else
 					$description[] = sprintf( '<strong>%s:</strong> %s', __( 'Recipient', 'mycred' ), __( 'Both', 'mycred' ) );
 
-				echo '<p>' . implode( '<br />', $description ) . '</p>';
+				$allowed_html = [
+				    'br'     => [],
+				    'strong' => []
+				];
+
+				echo '<p>' . wp_kses( implode( '<br />', $description ), $allowed_html ) . '</p>';
 
 			}
 
@@ -444,7 +437,7 @@ if ( ! class_exists( 'myCRED_Email_Notice_Module' ) ) :
 					foreach ( $email->point_types as $type_key ) {
 						$types[] = $this->point_types[ $type_key ];
 					}
-					echo implode( ', ', $types );
+					echo esc_html( implode( ', ', $types ) );
 				}
 				echo '</p>';
 
@@ -608,7 +601,7 @@ if ( ! class_exists( 'myCRED_Email_Notice_Module' ) ) :
 		<div class="col-lg-12 col-md-12 col-sm-12 col-xs-12">
 			<div class="form-group">
 				<label for="mycred-email-instance"<?php if ( $post->post_status == 'publish' && empty( $trigger ) ) echo ' style="color:red;font-weight:bold;"'; ?>><?php _e( 'Send this email notice when...', 'mycred' ); ?></label>
-				<select name="mycred_email[instance]" id="mycred-email-instance" class="form-control">
+				<select name="mycred_email[instance]" id="mycred-email-instance" class="form-control mycred-email-instance-options">
 <?php
 
 			// Loop though instances
@@ -657,9 +650,14 @@ if ( ! class_exists( 'myCRED_Email_Notice_Module' ) ) :
 				<label for="mycred-email-ctype"><?php _e( 'Point Types', 'mycred' ); ?></label>
 <?php
 
-			if ( count( $this->point_types ) > 1 ) {
+	
 
-				mycred_types_select_from_checkboxes( 'mycred_email[ctype][]', 'mycred-email-ctype', $email->point_types );
+			if ( count( $this->point_types ) > 1  ) {
+
+				$point_types_html = mycred_types_select_from_checkboxes( 'mycred_email[ctype][]', 'mycred-email-ctype', $email->point_types, true );
+
+
+				echo apply_filters( 'mycred_point_type_checkbox', $point_types_html );
 
 			}
 
@@ -676,6 +674,7 @@ if ( ! class_exists( 'myCRED_Email_Notice_Module' ) ) :
 ?>
 
 			</div>
+			<?php do_action('mycred_after_email_triggers', $post); ?>
 			<hr />
 
 			<div class="form-group" style="margin-bottom: 0;">
@@ -848,6 +847,46 @@ if ( ! class_exists( 'myCRED_Email_Notice_Module' ) ) :
 		</div>
 	</div>
 </div>
+<div class="row">
+	<div class="col-lg-6 col-md-6 col-sm-12 col-xs-12">
+		<h3><?php _e( 'Badge Related', 'mycred' ); ?></h3>
+		<div class="row">
+			<div class="col-lg-6 col-md-6 col-sm-12 col-xs-12">
+				<strong>%badge_title%</strong>
+			</div>
+			<div class="col-lg-6 col-md-6 col-sm-12 col-xs-12">
+				<div><?php _e( 'Gained badge title', 'mycred' ); ?></div>
+			</div>
+		</div>
+		<div class="row">
+			<div class="col-lg-6 col-md-6 col-sm-12 col-xs-12">
+				<strong>%badge_image%</strong>
+			</div>
+			<div class="col-lg-6 col-md-6 col-sm-12 col-xs-12">
+				<div><?php _e( 'Gained badge image', 'mycred' ); ?></div>
+			</div>
+		</div>
+	</div>
+	<div class="col-lg-6 col-md-6 col-sm-12 col-xs-12">
+		<h3><?php _e( 'Rank Related', 'mycred' ); ?></h3>
+		<div class="row">
+			<div class="col-lg-6 col-md-6 col-sm-12 col-xs-12">
+				<strong>%rank_title%</strong>
+			</div>
+			<div class="col-lg-6 col-md-6 col-sm-12 col-xs-12">
+				<div><?php _e( 'Users rank title', 'mycred' ); ?></div>
+			</div>
+		</div>
+		<div class="row">
+			<div class="col-lg-6 col-md-6 col-sm-12 col-xs-12">
+				<strong>%rank_image%</strong>
+			</div>
+			<div class="col-lg-6 col-md-6 col-sm-12 col-xs-12">
+				<div><?php _e( 'Users rank image', 'mycred' ); ?></div>
+			</div>
+		</div>
+	</div>
+</div>
 <?php
 
 		}
@@ -938,14 +977,16 @@ if ( ! class_exists( 'myCRED_Email_Notice_Module' ) ) :
 			// Point Types
 			if ( array_key_exists( 'ctype', $_POST['mycred_email'] ) && ! empty( $_POST['mycred_email']['ctype'] ) ) {
 
-				$checked_types = ( isset( $_POST['mycred_email']['ctype'] ) ) ? $_POST['mycred_email']['ctype'] : array();
-				if ( ! empty( $checked_types ) ) {
-					foreach ( $checked_types as $type_key ) {
+				if ( isset( $_POST['mycred_email']['ctype'] ) && is_array( $_POST['mycred_email']['ctype'] ) ) {
+					
+					foreach ( $_POST['mycred_email']['ctype'] as $type_key ) {
 						$type_key = sanitize_key( $type_key );
 						if ( mycred_point_type_exists( $type_key ) && ! in_array( $type_key, $point_types ) )
 							$point_types[] = $type_key;
 					}
+				
 				}
+
 				mycred_update_post_meta( $post_id, 'mycred_email_ctype', $point_types );
 
 			}
@@ -974,7 +1015,8 @@ if ( ! class_exists( 'myCRED_Email_Notice_Module' ) ) :
 			// Save styling
 			if ( ! empty( $_POST['mycred_email']['styling'] ) )
 				mycred_update_post_meta( $post_id, 'mycred_email_styling', wp_kses_post( $_POST['mycred_email']['styling'] ) );
-
+              
+              do_action( 'mycred_save_email_notice', $post_id );
 		}
 
 		/**
@@ -1102,6 +1144,7 @@ if ( ! class_exists( 'myCRED_Email_Notice_Module' ) ) :
 
 		}
 
+
 		/**
 		 * Rank Demotions
 		 * @since 1.7.6
@@ -1135,6 +1178,48 @@ if ( ! class_exists( 'myCRED_Email_Notice_Module' ) ) :
 
 			}
 
+		}
+		
+		/**
+		 * Cashcred Pending
+		 * @since 2.1.1
+		 * @version 1.0
+		 */
+		public function after_payment_request( $payment_withdrawal_request , $meta_value ) {
+
+            $point_type = $payment_withdrawal_request['point_type'];
+			$user_id = $payment_withdrawal_request['user_id'];
+
+			$status = 'pending';
+			if( $meta_value == 'Approved' )
+			    $status = 'approved';
+			elseif( $meta_value == 'Cancelled' )
+			    $status = 'cancel';
+			    
+			$emails  = mycred_get_event_emails( $point_type, 'generic', 'cashcred_' . $status );
+			if ( empty( $emails ) ) return;
+			$mycred     = mycred( $point_type );
+			$balance    = $payment_withdrawal_request['user_balance'];
+
+			$request    = array(
+				'ref'      => 'cashcred_payment_process',
+				'user_id'  => $user_id,
+				'amount'   => $payment_withdrawal_request['points'],
+				'entry'    => 'cashcred_payment_request',
+				'ref_id'   => $payment_withdrawal_request['post_id'],
+				'data'     => array( 'ref_type' => 'post' ),
+				'type'     => $point_type,
+				'new'      => $balance,
+				'old'      => $balance
+			);
+
+			foreach ( $emails as $notice_id ) {
+				// Respect unsubscriptions
+				if ( mycred_user_wants_email( $user_id, $notice_id ) )
+					mycred_send_new_email( $notice_id, $request, $point_type );
+
+			}
+		
 		}
 
 		/**

@@ -204,12 +204,22 @@ endif;
 /**
  * Save Reward Setup
  * @since 1.5
- * @version 1.0.1
+ * @version 2.0.0
  */
 if ( ! function_exists( 'mycred_woo_save_reward_settings' ) ) :
 	function mycred_woo_save_reward_settings( $post_id ) {
-
-		if ( ! isset( $_POST['mycred_reward'] ) || empty( $_POST['mycred_reward'] ) || mycred_get_post_type( $post_id ) != 'product' ) return;
+		
+		//Works only for multisite
+		$override = ( is_multisite() && mycred_override_settings() && ! mycred_is_main_site() );
+		
+		$post_type = '';
+		
+		if( $override )
+			$post_type = get_post_type( $post_id );
+		else
+			$post_type = mycred_get_post_type( $post_id );
+		
+		if ( ! isset( $_POST['mycred_reward'] ) || empty( $_POST['mycred_reward'] ) || $post_type != 'product' ) return;
 
 		$new_setup = array();
 		foreach ( $_POST['mycred_reward'] as $point_type => $setup ) {
@@ -261,6 +271,19 @@ if ( ! function_exists( 'mycred_woo_save_product_variation_detail' ) ) :
 
 	}
 endif;
+
+/**
+ * Register WooCommerce Purchase Reward refrence
+ * @since 2.1
+ * @version 1.0
+ */
+function mycred_register_woo_reward_ref( $list ) {
+
+    $list['reward'] = 'WooCommerce Purchase reaward';
+    return $list;
+
+}
+add_filter( 'mycred_all_references', 'mycred_register_woo_reward_ref' );
 
 /**
  * Payout Rewards
@@ -354,15 +377,14 @@ if ( ! function_exists( 'mycred_get_woo_product_reward' ) ) :
 		$is_variable  = false;
 		if ( $product_id === 0 ) return false;
 
-		if ( function_exists( 'wc_get_product' ) ) {
+		if ( function_exists( 'wc_get_product' ) ) { 
 
 			$product  = wc_get_product( $product_id );
 
 			// For variations, we need a variation ID
 			if ( $product->is_type( 'variable' ) && $variation_id !== NULL && $variation_id > 0 ) {
-				$parent_product_id   = $product->get_parent();
 				$reward_setup        = (array) mycred_get_post_meta( $variation_id, '_mycred_reward', true );
-				$parent_reward_setup = (array) mycred_get_post_meta( $parent_product_id, 'mycred_reward', true );
+				$parent_reward_setup = (array) mycred_get_post_meta( $product_id, 'mycred_reward', true );
 			}
 			else {
 				$reward_setup        = (array) mycred_get_post_meta( $product_id, 'mycred_reward', true );
